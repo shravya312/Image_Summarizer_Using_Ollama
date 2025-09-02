@@ -39,7 +39,11 @@ def deskew(image_np):
     return rotated
 
 def preprocess_for_ocr(image_np):
-    img = deskew(image_np)
+    # Add padding to the image before further processing
+    border_size = 20 # pixels
+    padded_image = cv2.copyMakeBorder(image_np, border_size, border_size, border_size, border_size, cv2.BORDER_CONSTANT, value=[255, 255, 255])
+
+    img = deskew(padded_image) # Apply deskew to the padded image
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     den = cv2.fastNlMeansDenoising(gray, None, h=15, templateWindowSize=7, searchWindowSize=21)
     thr = cv2.adaptiveThreshold(den, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10)
