@@ -9,12 +9,18 @@ import cv2
 import numpy as np
 import pytesseract
 import google.generativeai as genai
+import json # Added json import
+import time # Added time import
 
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Set tesseract.exe path here if on Windows
 TESSERACT_CMD = r"C:/Program Files/Tesseract-OCR/tesseract.exe" # Update this path if Tesseract is installed elsewhere
+
+OCR_LANGS = "eng" # Using only English for now, can be "eng+hin" if needed
+RUNS_DIR = "runs"
+os.makedirs(RUNS_DIR, exist_ok=True)
 
 if TESSERACT_CMD:
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
@@ -51,7 +57,7 @@ def preprocess_for_ocr(image_np):
     morphed = cv2.morphologyEx(thr, cv2.MORPH_CLOSE, kernel, iterations=1)
     return morphed
 
-def tesseract_ocr(image_np, psm=6, oem=3, lang="eng"): # Removed hin for broader compatibility initially
+def tesseract_ocr(image_np, psm=6, oem=3, lang=OCR_LANGS):
     config = f"--oem {oem} --psm {psm}"
     # Convert numpy array to PIL Image for pytesseract
     image_pil = Image.fromarray(cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB))
@@ -85,6 +91,22 @@ def run_gemini_repair(image_pil, raw_text, prompt_mode="clean"):
         {"text": "-----\nOCR (Tesseract) text:\n" + str(raw_text) + "\n-----\n"}
     ])
     return resp.text.strip()
+
+def save_run(run_dir, settings, ollama_summary, raw_text, gemini_text, entities_json_str=None):
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "settings.json"), "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
+    with open(os.path.join(run_dir, "ollama_summary.txt"), "w", encoding="utf-8") as f:
+        f.write(ollama_summary or "")
+    with open(os.path.join(run_dir, "raw_ocr.txt"), "w", encoding="utf-8") as f:
+        f.write(raw_text or "")
+    with open(os.path.join(run_dir, "gemini_text.txt"), "w", encoding="utf-8") as f:
+        f.write(gemini_text or "")
+    if entities_json_str:
+        with open(os.path.join(run_dir, "entities.json"), "w", encoding="utf-8") as f:
+            f.write(entities_json_str)
+    st.success(f"Run saved to: {os.path.abspath(run_dir)}")
+    return os.path.abspath(run_dir)
 
 st.set_page_config(layout="wide", page_title="Image Summarization with Ollama VLM + OCR & Gemini")
 
@@ -139,11 +161,11 @@ if st.button("Generate Summary"):
                             'images': [img_base64]
                         },
                     ])
+                    ollama_summary_content = ollama_response['message']['content']
                     st.subheader("Ollama Image Summary:")
-                    st.write(ollama_response['message']['content'])
+                    st.write(ollama_summary_content)
 
                     # Tesseract OCR and Gemini Text Repair/Extraction
-                    # Convert PIL Image to OpenCV format (numpy array)
                     image_np = np.array(image)
                     image_cv = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
@@ -152,15 +174,24 @@ if st.button("Generate Summary"):
                     st.subheader("Raw OCR Text:")
                     st.write(raw_text if raw_text else "No text found by OCR.")
 
+                    gemini_clean_text = ""
+                    # Only run Gemini if raw_text is available
                     if raw_text:
                         gemini_clean_text = run_gemini_repair(image, raw_text, prompt_mode="clean")
                         st.subheader("Gemini Refined Text:")
                         st.write(gemini_clean_text)
 
-                        # Optional: Gemini for entity extraction
-                        # gemini_entities_json_str = run_gemini_repair(image, raw_text, prompt_mode="extract")
-                        # st.subheader("Gemini Extracted Entities (JSON):")
-                        # st.json(json.loads(gemini_entities_json_str))
+                    # Save the run
+                    ts = time.strftime("%Y%m%d-%H%M%S")
+                    run_dir = os.path.join(RUNS_DIR, f"run-{ts}")
+                    settings = {
+                        "ollama_model": ollama_model,
+                        "tesseract_cmd": TESSERACT_CMD,
+                        "ocr_languages": OCR_LANGS,
+                        "gemini_model": "gemini-2.5-flash",
+                        "image_file": uploaded_file.name # Save the original filename
+                    }
+                    save_run(run_dir, settings, ollama_summary_content, raw_text, gemini_clean_text)
 
                 except Exception as e:
                     st.error(f"Error during processing: {e}")
